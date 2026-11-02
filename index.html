@@ -1732,6 +1732,7 @@ function hostData(rec, d) {
   else if (d.t === 'p') {
     rec.started = true; rec.echo = d.n | 0; rec.rtt = d.r || 0;
     if ((d.a | 0) > rec.ack) rec.ack = d.a | 0;
+    { const q = game && isOnlineHost && state === 'play' && rec.hi >= 0 ? game.humans[rec.hi] : null; if (q && q.remote && Number.isFinite(+d.dx) && Number.isFinite(+d.dz)) { q.ctl.dx = clamp(+d.dx, -1, 1); q.ctl.dz = clamp(+d.dz, -1, 1); } }
     if (game && isOnlineHost && d.e === NET.ep) {
       const p = rec.hi >= 0 ? game.humans[rec.hi] : null;
       if (p && p.remote && Math.hypot(d.x - p.x, d.z - p.z) < 3) TC.applyRemote(game, p, +d.x || 0, +d.z || 0, +d.vx || 0, +d.vz || 0);
@@ -1739,7 +1740,11 @@ function hostData(rec, d) {
   } else if (d.t === 'k') {
     if ((d.i | 0) <= rec.kid) return; rec.kid = d.i | 0;        // duplicate copies of the same press are ignored
     const p = game && state === 'play' && game.humans[rec.hi];
-    if (p && p.remote) { if (d.k === 'l') p.ctl.lob = true; else p.ctl.swing = true; }
+    if (p && p.remote) {
+      if (Number.isFinite(+d.dx)) p.ctl.dx = clamp(+d.dx, -1, 1);                 // direction / spin input the guest was holding when it pressed
+      if (Number.isFinite(+d.dz)) p.ctl.dz = clamp(+d.dz, -1, 1);
+      if (d.k === 'l') p.ctl.lob = true; else p.ctl.swing = true;
+    }
   }
 }
 function hostStart() {
@@ -1786,7 +1791,7 @@ function hostTick(dt) {
   const recs = NET.live.filter((r) => !r.gone);
   if (g.events.length) for (const r of recs) for (const ev of g.events) { r.evq.push([++r.evId, ev]); if (r.evq.length > 80) r.evq.shift(); }
   NET.acc += dt; if (g.events.length) NET.acc = Math.max(NET.acc, SNAP_DT);
-  for (const r of recs) if (now - r.lastRx > 300) { const p = r.hi >= 0 ? g.humans[r.hi] : null; if (p && p.remote) { p.vx = 0; p.vz = 0; } }   // no reports → stop dead-reckoning
+  for (const r of recs) if (now - r.lastRx > 300) { const p = r.hi >= 0 ? g.humans[r.hi] : null; if (p && p.remote) { p.vx = 0; p.vz = 0; p.ctl.dx = 0; p.ctl.dz = 0; } }   // no reports → stop dead-reckoning
   if (NET.acc < SNAP_DT) return;
   NET.acc = 0;
   let any = false; for (const r of recs) if (r.evq.length) any = true;
@@ -1860,12 +1865,14 @@ function guestSnap(d) {
   }
   NET.snap = d; NET.snapAt = now;
 }
-function guestInput() {
-  const me = game.humans[myHi]; if (!me) return;
+function guestDir(me) {
   let dx = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0) + joy.dx;
   let dz = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0) + joy.dz;
-  dx = clamp(dx, -1, 1); dz = clamp(dz, -1, 1);
-  me.ctl.dx = dx * me.s; me.ctl.dz = dz * me.s;                    // far-side players see mirrored axes
+  return [clamp(dx, -1, 1) * me.s, clamp(dz, -1, 1) * me.s];            // far-side players see mirrored axes
+}
+function guestInput() {
+  const me = game.humans[myHi]; if (!me) return;
+  const d = guestDir(me); me.ctl.dx = d[0]; me.ctl.dz = d[1];
 }
 function guestTick(dt) {
   const g = game, s = NET.snap; if (!s) return;
@@ -1894,12 +1901,12 @@ function guestSend(dt) {
   NET.pAcc += dt; if (NET.pAcc < (me ? 0.033 : 0.1)) return; NET.pAcc = 0;
   const dc = c.dataChannel; if (dc && dc.bufferedAmount > 16384) return;
   if (!me) { try { c.send({ t: 'p', e: NET.ep, a: NET.lastEv, n: Math.round(performance.now()), r: Math.round(NET.rtt) }); } catch (e) { /* closed */ } setNetInfo('観戦中 · ping ' + (NET.rtt ? Math.round(NET.rtt) + 'ms' : '–'), NET.rtt); return; }
-  try { c.send({ t: 'p', x: r3(me.x), z: r3(me.z), vx: r3(me.vx), vz: r3(me.vz), e: NET.ep, a: NET.lastEv, n: Math.round(performance.now()), r: Math.round(NET.rtt) }); } catch (e) { /* closed */ }
+  try { c.send({ t: 'p', x: r3(me.x), z: r3(me.z), vx: r3(me.vx), vz: r3(me.vz), dx: r3(me.ctl.dx), dz: r3(me.ctl.dz), e: NET.ep, a: NET.lastEv, n: Math.round(performance.now()), r: Math.round(NET.rtt) }); } catch (e) { /* closed */ }
   setNetInfo('ping ' + (NET.rtt ? Math.round(NET.rtt) + 'ms' : '–'), NET.rtt);
 }
 function guestPress(kind) {
   const c = NET.hostConn; if (!c || !c.open || myHi < 0) return;
-  const msg = { t: 'k', k: kind === 'lob' ? 'l' : 's', i: ++NET.kid };
+  const me = game && game.humans[myHi], dir = me ? guestDir(me) : [0, 0], msg = { t: 'k', k: kind === 'lob' ? 'l' : 's', i: ++NET.kid, dx: r3(dir[0]), dz: r3(dir[1]) };
   try { c.send(msg); } catch (e) { /* closed */ }
   setTimeout(() => { try { if (c.open) c.send(msg); } catch (e) { /* closed */ } }, 30);   // duplicate copy, de-duplicated by id on the host
 }
@@ -4371,7 +4378,7 @@ resize();
 el.hud.hidden = true; el.pause.hidden = true; el.end.hidden = true; el.gauge.hidden = true;
 camera.position.copy(cam.pos);
 requestAnimationFrame(frame);
-window.__cc = { handleEvents, get rigs() { return rigs; }, gachaRoll, Cloud, profile, saveProfile, startFriendPeer, probeAll, get fxState() { return { on: fxOn, err: fxErr, sparks: psAlive(psS), confetti: psAlive(psC), flashes: psAlive(psF), combo: combo.slice() }; }, settings, lm, startReplay, get rp() { return rp; }, get rec() { return rec; }, get game() { return game; }, get state() { return state; }, startMatch, frame, scene, camera };
+window.__cc = { NET, hostData, handleEvents, get rigs() { return rigs; }, gachaRoll, Cloud, profile, saveProfile, startFriendPeer, probeAll, get fxState() { return { on: fxOn, err: fxErr, sparks: psAlive(psS), confetti: psAlive(psC), flashes: psAlive(psF), combo: combo.slice() }; }, settings, lm, startReplay, get rp() { return rp; }, get rec() { return rec; }, get game() { return game; }, get state() { return state; }, startMatch, frame, scene, camera };
 })();
 
   } catch (e) {
