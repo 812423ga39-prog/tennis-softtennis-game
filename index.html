@@ -1,9 +1,7 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <title>Center Court 3D</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#070c18">
+<title>Center Court 3D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
 <style>
@@ -153,7 +151,6 @@ body.mode2 #keys1p { display: none; }
 .fld[hidden] { display: none; }
 .note { font-size: 12.5px; color: var(--dim); margin-top: -4px; }
 .note b { color: var(--ink, #e8eef6); font-weight: 700; }
-body.touch #fldMode { display: none; }
 body.touch #segMode { grid-auto-columns: 1fr; }
 
 /* timing judgement */
@@ -414,7 +411,50 @@ body.deep #menu .card { gap: 10px; }
 .lobchat { margin-top: 8px; display: grid; gap: 6px } .lobchat[hidden] { display: none }
 .chatlog { height: 92px; overflow: auto; background: rgba(0,0,0,.3); border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; font-size: 13px }
 .chatlog .cm b { color: var(--ball); margin-right: 8px; font-size: 12px }
-</style>
+/* gacha reveal */
+.gfx { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; overflow: hidden; background: radial-gradient(circle at 50% 45%, #1b2748 0%, #05070f 70%); --gc: #9aa7bd }
+.gfx[hidden] { display: none }
+.gfx.bR { background: radial-gradient(circle at 50% 45%, #14305e, #05070f 70%) } .gfx.bSR { background: radial-gradient(circle at 50% 45%, #3a1a66, #07040f 70%) } .gfx.bSSR { background: radial-gradient(circle at 50% 45%, #5a4208, #0b0702 72%) }
+.gfx .rays { position: absolute; width: 220vmax; height: 220vmax; left: 50%; top: 45%; margin: -110vmax 0 0 -110vmax; opacity: 0; background: repeating-conic-gradient(from 0deg, color-mix(in srgb, var(--gc) 55%, transparent) 0 6deg, transparent 6deg 18deg); animation: gspin 16s linear infinite; -webkit-mask-image: radial-gradient(circle, #000 0, transparent 38%); mask-image: radial-gradient(circle, #000 0, transparent 38%); transition: opacity .6s }
+.gfx.revealed .rays, .gfx.bSSR .rays, .gfx.bSR .rays { opacity: .55 } .gfx.bC .rays { opacity: .0 } .gfx.bC.revealed .rays { opacity: .18 }
+@keyframes gspin { to { transform: rotate(360deg) } }
+.gfx canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 4 }
+.gfx .orb { position: absolute; width: 150px; height: 150px; border-radius: 50%; left: 50%; top: 45%; margin: -75px 0 0 -75px; background: radial-gradient(circle at 35% 30%, #fff, var(--gc) 45%, color-mix(in srgb, var(--gc) 40%, #000) 100%); box-shadow: 0 0 50px var(--gc), 0 0 120px color-mix(in srgb, var(--gc) 60%, transparent) }
+.gfx .orb::before { content: ''; position: absolute; inset: -22px; border-radius: 50%; border: 3px solid var(--gc); opacity: .6; animation: gring 1s ease-out infinite }
+.gfx .orb.shake { animation: gshake .16s linear infinite, ggrow 1.6s ease-in forwards }
+.gfx .orb.gone { display: none }
+@keyframes gshake { 0% { transform: translate(-5px, 2px) rotate(-6deg) } 25% { transform: translate(5px, -3px) rotate(5deg) } 50% { transform: translate(-4px, -2px) rotate(-4deg) } 75% { transform: translate(4px, 3px) rotate(6deg) } 100% { transform: translate(-5px, 2px) rotate(-6deg) } }
+@keyframes ggrow { from { scale: .7 } to { scale: 1.45 } }
+@keyframes gring { from { transform: scale(.8); opacity: .8 } to { transform: scale(1.7); opacity: 0 } }
+.gfx .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 5 } .gfx .flash.go { animation: gflash .6s ease-out }
+@keyframes gflash { 0% { opacity: 0 } 25% { opacity: 1 } 100% { opacity: 0 } }
+.gfx.pulse { animation: gpulse .5s } @keyframes gpulse { 0%, 100% { transform: none } 20% { transform: translate(6px, -5px) } 40% { transform: translate(-6px, 4px) } 60% { transform: translate(4px, 3px) } 80% { transform: translate(-3px, -3px) } }
+.gfx .cards { position: relative; z-index: 3; display: grid; grid-template-columns: repeat(5, minmax(0, 150px)); gap: 12px; justify-content: center; padding: 14px; max-width: 100vw }
+.gfx.one .cards { grid-template-columns: minmax(0, 250px) }
+.gcard { perspective: 900px; aspect-ratio: 3 / 4.3; opacity: 0; transform: translateY(26px) scale(.8); transition: opacity .3s, transform .35s }
+.gfx.revealed .gcard { opacity: 1; transform: none }
+.gcard .in { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transition: transform .6s cubic-bezier(.2, .8, .2, 1) }
+.gcard.up .in { transform: rotateY(180deg) }
+.gcard .back, .gcard .front { position: absolute; inset: 0; backface-visibility: hidden; border-radius: 10px; display: grid; align-content: center; gap: 2px; padding: 4px 2px; line-height: 1.2; justify-items: center; gap: 4px; border: 2px solid var(--gc); overflow: hidden }
+.gcard .back { background: repeating-linear-gradient(45deg, #121a30 0 10px, #182244 10px 20px); box-shadow: 0 0 16px color-mix(in srgb, var(--gc) 50%, transparent) } .gcard .back b { font: 800 44px var(--disp); color: var(--gc) }
+.gcard .front { transform: rotateY(180deg); background: linear-gradient(170deg, color-mix(in srgb, var(--gc) 28%, #101830), #0a0f1f 70%); box-shadow: 0 0 22px color-mix(in srgb, var(--gc) 70%, transparent) }
+.gcard.rSSR .front { background: linear-gradient(160deg, #6a4b05, #2a1d02 55%, #6a4b05); box-shadow: 0 0 40px #ffd24a, inset 0 0 30px #ffd24a66; animation: gshine 1.6s ease-in-out infinite }
+.gcard.rSR .front { box-shadow: 0 0 30px #b86bff, inset 0 0 18px #b86bff55 }
+@keyframes gshine { 50% { filter: brightness(1.35) } }
+.gcard .stars { color: var(--gc); font-size: 14px; letter-spacing: 1px } .gcard .nm { font-weight: 800; font-size: 15px; text-align: center } .gcard .tag { font-size: 11px; color: var(--dim) } .gcard .tag.new { color: #ffe27a; font-weight: 800; font-size: 13px }
+.gcard .art { height: 30%; display: grid; place-items: center } .gcard .art .man { transform: scale(.4); transform-origin: center } .gfx.one .gcard .art .man { transform: scale(.9) }
+.rk { position: relative; width: 60px; height: 110px } .rk .ring { position: absolute; left: 4px; top: 0; width: calc(52px * var(--s)); height: calc(66px * var(--s)); border: 6px solid var(--c); border-radius: 50%; background: repeating-linear-gradient(0deg, #ffffff22 0 2px, transparent 2px 8px) , repeating-linear-gradient(90deg, #ffffff22 0 2px, transparent 2px 8px); transform: translateX(calc((52px - 52px * var(--s)) / 2)) } .rk .hdl { position: absolute; left: 25px; top: 62px; width: 10px; height: 46px; border-radius: 4px; background: #222 }
+.gfx .msg { position: absolute; top: 3%; left: 0; right: 0; text-align: center; font: 800 clamp(26px, 6vw, 56px) var(--disp); color: var(--gc); text-shadow: 0 0 22px var(--gc); z-index: 6; pointer-events: none }
+.gfx .skip { position: absolute; right: 14px; top: 14px; z-index: 7 } .gfx .ok { position: absolute; bottom: 6%; left: 50%; width: min(260px, 70vw); margin-left: calc(min(260px, 70vw) / -2); z-index: 7 }
+@media (max-width: 640px) { .gfx .cards { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px } .gcard .nm { font-size: 10px } .gcard .stars { font-size: 9px } .gcard .tag { font-size: 8px } .gcard .back b { font-size: 24px } .gcard .art .man { transform: scale(.38) } .rk { transform: scale(.55) } }
+/* compact HUD on phones / narrow screens: only ⚙ and pause are always visible */
+#bTools { display: none }
+@media (max-width: 760px) { body.playing #bTools { display: inline-block } body.playing #tools { flex-direction: row-reverse; max-width: 92vw; } body.playing:not(.toolsOpen) #tools .chip:not(#bTools):not(#bPause):not(#bChat) { display: none } body.playing #hint { top: 120px !important; bottom: auto !important } }
+body.touch.playing #bTools { display: inline-block } body.touch.playing #tools { flex-direction: row-reverse; max-width: 92vw } body.touch.playing:not(.toolsOpen) #tools .chip:not(#bTools):not(#bPause):not(#bChat) { display: none } body.touch.playing #hint { top: 120px !important; bottom: auto !important }
+body.toolsOpen.playing #tools { background: rgba(5,9,20,.88); padding: 8px; border-radius: 8px; border: 1px solid var(--line) }
+#bChat[hidden] { display: none !important }
+body:not(.two) #gauge span { left: auto; right: -4px; transform: none }
+</style></head><body>
 
 <canvas id="gl" aria-label="3Dテニスコート"></canvas>
 
@@ -428,6 +468,7 @@ body.deep #menu .card { gap: 10px; }
     <div class="row" id="sCpu"><span class="srv"></span><span class="nm" id="nmCpu">CPU</span><span class="gm" id="gCpu">0</span><span class="pt" id="pCpu">0</span></div>
   </div>
   <div id="tools">
+    <button class="chip" id="bTools" type="button" aria-expanded="false">⚙ 設定</button>
     <button class="chip" id="bCam" type="button">視点 後方</button>
     <button class="chip" id="bPath" type="button" aria-pressed="true">軌道 ON</button>
     <button class="chip" id="bAssist" type="button" aria-pressed="false">目印 OFF</button>
@@ -436,7 +477,7 @@ body.deep #menu .card { gap: 10px; }
     <button class="chip" id="bVoice" type="button" aria-pressed="false">コール OFF</button>
     <button class="chip" id="bChat" type="button" hidden>💬 チャット</button>
     <button class="chip" id="bSnd" type="button" aria-pressed="false">サウンド ON</button>
-    <button class="chip" id="bPause" type="button">一時停止</button>
+    <button class="chip" id="bPause" type="button">⏸ 一時停止</button>
   </div>
   <div id="spd"></div>
   <div id="rally"></div>
@@ -605,6 +646,16 @@ body.deep #menu .card { gap: 10px; }
 
 <div id="invToast" hidden><span id="invToastText"></span><button type="button" class="chip" id="invYes">参加する</button><button type="button" class="chip" id="invNo">×</button></div>
 
+<div id="gFx" class="gfx" hidden>
+  <div class="rays"></div>
+  <canvas id="gFxCv"></canvas>
+  <div class="orb" id="gFxOrb"><i></i></div>
+  <div class="cards" id="gFxCards"></div>
+  <div class="msg" id="gFxMsg"></div>
+  <div class="flash" id="gFxFlash"></div>
+  <button type="button" class="chip skip" id="gFxSkip">スキップ »</button>
+  <button type="button" class="go ok" id="gFxOk" hidden>OK</button>
+</div>
 <div id="chatFeed" aria-live="polite"></div>
 <div id="chatPad" hidden>
   <div id="stampGrid" class="stamps"></div>
@@ -2205,20 +2256,93 @@ function renderGacha() {
   const all = [].concat(...RARITY_ORDER.map((k) => P[k])), got = all.filter((i) => own.includes(i)).length;
   $('gInfo').textContent = '排出 ★C 67.5% / ★★R 25% / ★★★SR 6% / ★★★★SSR 1.5%' + ' ・ SSRまであと最大 ' + (GACHA.pity - profile.pity[gKind]) + ' 回で確定 ・ コンプ ' + got + '/' + all.length + ' ・ ダブりはコインに戻ります';
 }
+
+/* ----- gacha reveal: charge-up orb → flash → cards flip one by one (SSR gets a full celebration) ----- */
+const G_COL = { C: '#9aa7bd', R: '#4a90ff', SR: '#b86bff', SSR: '#ffd24a' };
+const G_STAR = { C: '★', R: '★★', SR: '★★★', SSR: '★★★★' };
+function gArt(kind, id) {
+  if (kind === 'chars') {
+    const l = (CHAR_VIS[id] || CHAR_VIS.rookie).look;
+    return '<div class="man s0 h0" style="--shirt:' + hex(l.shirt) + ';--shorts:' + hex(l.shorts) + ';--hair:' + hex(l.hair) + ';--skin:' + hex(l.skin) + '"><i class="hr"></i><i class="hd"></i><i class="cap"></i><i class="bd"></i><i class="tr"></i><i class="sh"></i><i class="lg"></i></div>';
+  }
+  const v = RACKET_VIS[id] || RACKET_VIS.std;
+  return '<div class="rk" style="--c:' + hex(v.frame) + ';--s:' + (v.scale || 1) + '"><i class="ring"></i><i class="hdl"></i></div>';
+}
+let gFxTimers = [];
+const gT = (f, ms) => { gFxTimers.push(setTimeout(f, ms)); };
+function gTone(r, i) {
+  if (typeof Snd === 'undefined' || !Snd.ctx) return;
+  const base = { C: 520, R: 620, SR: 740, SSR: 880 }[r];
+  Snd.tone(base, base * 1.01, 0.18, 0.09);
+  if (r !== 'C') Snd.tone(base * 1.5, base * 1.5, 0.3, 0.07);
+  if (r === 'SR' || r === 'SSR') Snd.tone(base * 2, base * 2, 0.4, 0.06);
+  if (r === 'SSR') [1, 1.25, 1.5, 2].forEach((m, k) => setTimeout(() => Snd.tone(880 * m, 880 * m, 0.5, 0.08), k * 110));
+}
+function gachaFx(res, kind, done) {
+  const fx = $('gFx'), best = res.reduce((a, x) => (RARITY_ORDER.indexOf(x.r) > RARITY_ORDER.indexOf(a) ? x.r : a), 'C'), col = G_COL[best];
+  const single = res.length === 1, calm = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  fx.hidden = false; fx.className = 'gfx b' + best + (single ? ' one' : '');
+  fx.style.setProperty('--gc', col);
+  $('gFxOrb').className = 'orb'; $('gFxCards').innerHTML = ''; $('gFxCards').className = 'cards'; $('gFxOk').hidden = true; $('gFxSkip').hidden = false; $('gFxFlash').className = 'flash';
+  $('gFxMsg').textContent = '';
+  if (typeof Snd !== 'undefined') { Snd.init(); Snd.tone(180, 900, calm ? 0.3 : 1.2, 0.07); }
+  const cards = res.map((x, i) => {
+    const v = (kind === 'chars' ? CHAR_VIS : RACKET_VIS)[x.id], c = document.createElement('div');
+    c.className = 'gcard r' + x.r; c.style.setProperty('--gc', G_COL[x.r]);
+    c.innerHTML = '<div class="in"><div class="back"><b>?</b></div><div class="front"><div class="stars">' + G_STAR[x.r] + '</div><div class="art">' + gArt(kind, x.id) + '</div><div class="nm">' + v.name + '</div><div class="tag ' + (x.fresh ? 'new' : '') + '">' + (x.fresh ? 'NEW!' : 'ダブり +' + x.back) + '</div></div></div>';
+    $('gFxCards').appendChild(c); return c;
+  });
+  let shown = 0, finished = false;
+  const reveal = (i, quick) => {
+    const c = cards[i]; if (!c || c.classList.contains('up')) return; c.classList.add('up'); shown++;
+    const r = res[i].r; gTone(r, i);
+    if (r === 'SSR' || r === 'SR') { fx.classList.add('pulse'); setTimeout(() => fx.classList.remove('pulse'), 600); if (!calm) gConfetti(r === 'SSR' ? 160 : 70, G_COL[r]); }
+    if (r === 'SSR') $('gFxMsg').textContent = 'SSR  大当たり！！';
+    else if (r === 'SR' && $('gFxMsg').textContent === '') $('gFxMsg').textContent = 'SR 獲得！';
+    if (shown === cards.length) finish();
+  };
+  const finish = () => { if (finished) return; finished = true; $('gFxSkip').hidden = true; $('gFxOk').hidden = false; };
+  $('gFxSkip').onclick = () => { gFxTimers.forEach(clearTimeout); gFxTimers = []; $('gFxOrb').className = 'orb gone'; $('gFxFlash').className = 'flash'; fx.classList.add('revealed'); cards.forEach((c, i) => reveal(i, true)); };
+  $('gFxOk').onclick = () => { gFxTimers.forEach(clearTimeout); gFxTimers = []; fx.hidden = true; gConfettiStop(); done(); };
+  const charge = calm ? 300 : single ? 1500 : 1900;
+  $('gFxOrb').classList.add('shake');
+  gT(() => { $('gFxFlash').className = 'flash go'; }, charge);
+  gT(() => {
+    $('gFxOrb').className = 'orb gone'; fx.classList.add('revealed');
+    const step = single ? 0 : res.length > 5 ? 300 : 450;
+    cards.forEach((c, i) => gT(() => reveal(i), i * step + 150));
+  }, charge + 220);
+}
+/* confetti on a small canvas */
+let gCf = null;
+function gConfetti(n, col) {
+  const cv = $('gFxCv'), cx = cv.getContext('2d'); cv.width = cv.clientWidth || innerWidth; cv.height = cv.clientHeight || innerHeight;
+  if (!gCf) gCf = { p: [], raf: 0 };
+  const cols = [col, '#ffffff', '#ffe58a', '#ff8ad8', '#7fd1ff'];
+  for (let i = 0; i < n; i++) gCf.p.push({ x: cv.width / 2, y: cv.height * 0.45, vx: (Math.random() - 0.5) * 16, vy: -Math.random() * 15 - 3, g: 0.35, s: 4 + Math.random() * 6, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.4, c: cols[i % cols.length], life: 90 + Math.random() * 60 });
+  if (gCf.raf) return;
+  const tick = () => {
+    cx.clearRect(0, 0, cv.width, cv.height);
+    gCf.p = gCf.p.filter((q) => q.life-- > 0 && q.y < cv.height + 20);
+    for (const q of gCf.p) { q.vy += q.g; q.x += q.vx; q.y += q.vy; q.vx *= 0.99; q.r += q.vr; cx.save(); cx.translate(q.x, q.y); cx.rotate(q.r); cx.globalAlpha = Math.min(1, q.life / 30); cx.fillStyle = q.c; cx.fillRect(-q.s / 2, -q.s / 3, q.s, q.s * 0.6); cx.restore(); }
+    if (gCf.p.length) gCf.raf = requestAnimationFrame(tick); else { gCf.raf = 0; cx.clearRect(0, 0, cv.width, cv.height); }
+  };
+  gCf.raf = requestAnimationFrame(tick);
+}
+function gConfettiStop() { if (gCf) { gCf.p = []; } }
 function pullClick(n) {
   if (gBusy) return;
   const res = gachaPull(gKind, n); if (!res) { shopMsg('コインが足りません'); return; }
   gBusy = true; renderGacha(); shopMsg('');
   const out = $('gOut'); out.innerHTML = '';
-  res.forEach((x, i) => {
+  res.forEach((x) => {
     const v = (gKind === 'chars' ? CHAR_VIS : RACKET_VIS)[x.id], e = document.createElement('div');
-    e.className = 'gi r' + x.r; e.style.animationDelay = (i * 0.12) + 's';
+    e.className = 'gi r' + x.r;
     e.innerHTML = '<b>' + x.r + '</b><span>' + v.name + '</span><i>' + (x.fresh ? 'NEW!' : '+' + x.back + ' コイン') + '</i>';
     out.appendChild(e);
   });
-  setTimeout(() => { gBusy = false; if (!$('shopCard').hidden && shopTab === 'gacha') renderGacha(); }, res.length * 120 + 500);
   const best = res.reduce((a, x) => (RARITY_ORDER.indexOf(x.r) > RARITY_ORDER.indexOf(a) ? x.r : a), 'C');
-  shopMsg(best === 'SSR' ? '🎉 SSR 大当たり！' : best === 'SR' ? '✨ SR 獲得！' : '');
+  gachaFx(res, gKind, () => { gBusy = false; if (!$('shopCard').hidden && shopTab === 'gacha') renderGacha(); shopMsg(best === 'SSR' ? '🎉 SSR 大当たり！' : best === 'SR' ? '✨ SR 獲得！' : ''); });
 }
 $('g1').addEventListener('click', () => pullClick(1));
 $('g10').addEventListener('click', () => pullClick(10));
@@ -3761,7 +3885,7 @@ $('btnSwing').addEventListener('pointerdown', (e) => { e.preventDefault(); Snd.r
 $('btnLob').addEventListener('pointerdown', (e) => { e.preventDefault(); Snd.resume(); press('lob'); });
 function enableTouch() { if (!touchMode) { touchMode = true; document.body.classList.add('touch'); if (typeof syncMenu === 'function') syncMenu(); } }
 window.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') enableTouch(); }, { passive: true });
-if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) enableTouch();
+if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) setTimeout(enableTouch, 0);     // after the whole script has run (syncMenu needs WZ etc.)
 
 /* ----- menu / overlay wiring ----- */
 function bindSeg(id, getter, setter) {
@@ -3868,6 +3992,7 @@ $('bFx').addEventListener('click', toggleJuice);
 $('bVoice').addEventListener('click', toggleVoice);
 $('bAssist').addEventListener('click', toggleAssist);
 $('bPath').addEventListener('click', togglePath);
+$('bTools').addEventListener('click', () => { const o = document.body.classList.toggle('toolsOpen'); $('bTools').setAttribute('aria-expanded', o ? 'true' : 'false'); });
 $('bSnd').addEventListener('click', () => { Snd.init(); Snd.setVol(Snd.vol + 1); syncButtons(); });
 $('bPause').addEventListener('click', () => setPaused(state === 'play'));
 function setSeg(id, val) {
@@ -4175,3 +4300,5 @@ window.__cc = { handleEvents, get rigs() { return rigs; }, gachaRoll, Cloud, pro
   }
 }
 </script>
+
+</body></html>
