@@ -579,6 +579,7 @@ body:not(.two) #gauge span { left: auto; right: -4px; transform: none }
         <div id="lobStamps" class="phrases"></div>
         <div class="chrow"><input type="text" id="lobIn" maxlength="40" placeholder="メッセージ（部屋のみんなに届く）" autocomplete="off"><button type="button" class="chip" id="lobGo">送信</button></div>
       </div>
+      <div id="netDiag" class="empty" style="text-align:center"></div>
       <div id="onlineStatus" style="font-size:13px; color:var(--ball); font-weight:700; text-align:center; min-height:20px;"></div>
       <div id="roster"></div>
       <div id="inviteBox" hidden></div>
@@ -1658,7 +1659,7 @@ function lobbyStatus() {
     const A = live.filter((r) => r.team === 'A').length, B = live.filter((r) => r.team === 'B').length, S = live.filter((r) => r.team === 'S').length;
     const dbl = settings.form === 'doubles';
     let msg;
-    if (!myRoomCode) msg = '部屋を作成中...';
+    if (!myRoomCode || !peerAlive(peer)) msg = '部屋を準備中...';
     else if (!live.length) msg = '部屋番号 [' + myRoomCode + '] を友だちに伝えてください';
     else if (B < 1) msg = '⚠️ 対戦相手がいません。参加者のボタンを押して「相手チーム」にしてください';
     else msg = '🟢 ' + (dbl ? 'ダブルス' : 'シングルス') + ' · 対戦 ' + (1 + A + B) + '人' + (S ? ' · 観戦 ' + S + '人' : '') + (dbl && 1 + A + B < 4 ? ' · 足りない分はCPU' : '') + ' · 「試合開始」で開始';
@@ -1683,7 +1684,14 @@ $('roster').addEventListener('click', (e) => {
   const b = e.target.closest('button.tm'); if (!b) return;
   const rec = NET.guests.find((r) => String(r.num) === b.dataset.n); if (rec) cycleTeam(rec);
 });
-setInterval(() => { if (state === 'menu' && settings.mode === 'online') { lobbyStatus(); lobbyBroadcast(); } }, 1000);
+setInterval(() => { if (state === 'menu' && settings.mode === 'online') { lobbyStatus(); lobbyBroadcast(); netDiag(); } }, 1000);
+// one-line connection check so a failing network is visible: library loaded? signalling server reachable? peer-to-peer link?
+function netDiag() {
+  const e = $('netDiag'); if (!e) return;
+  const lib = !!window.Peer, srv = peerAlive(peer) || peerAlive(WARM.guest) || (WARM.host && peerAlive(WARM.host.p)) || peerAlive(RQ.sp) || peerAlive(RQ.peer);
+  const p2p = !!(NET.hostConn && NET.hostConn.open) || NET.guests.some((r) => !r.gone && r.conn.open);
+  e.textContent = '通信: ライブラリ ' + (lib ? '✅' : '⏳') + ' ・ サーバー ' + (srv ? '✅' : lib ? '⏳' : '–') + ' ・ P2P ' + (p2p ? '✅' : '–');
+}
 
 /* ---------------------------- host ---------------------------- */
 function renumber() { NET.guests.forEach((r, i) => { r.hi = i + 1; }); }
@@ -1900,12 +1908,29 @@ function guestPress(kind) {
 function createRoom() { $('onlineStatus').textContent = '通信を準備中...'; loadPeerLib().then(createRoom0).catch(() => { $('onlineStatus').textContent = '⚠️ 通信ライブラリを読み込めません。ネットワークを確認してください'; }); }
 /* Connections are prepared in advance ("warm"): the signalling socket of a spare guest peer and of a spare host peer (with its room code already reserved)
    are opened while the player is still choosing, so creating / joining a room does not have to wait for the broker. */
+const PEER_CFG = {
+  iceCandidatePoolSize: 2, sdpSemantics: 'unified-plan',
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' },
+    { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
+    { urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turn:openrelay.metered.ca:443?transport=tcp'], username: 'openrelayproject', credential: 'openrelayproject' }   // TCP/443 relay for strict networks
+  ]
+};
+function mkPeer(id) { return id ? new Peer(id, { config: PEER_CFG }) : new Peer({ config: PEER_CFG }); }
+function peerErrText(err, join) {
+  const t = err && err.type;
+  if (t === 'peer-unavailable') return '⚠️ その部屋番号の部屋が見つかりません。番号を確認して、ホストが部屋を開いたままか確認してください';
+  if (t === 'unavailable-id') return '⚠️ この部屋番号は使用中です。「再作成」を押してください';
+  if (t === 'network' || t === 'server-error' || t === 'socket-error' || t === 'socket-closed') return '⚠️ 接続サーバー(PeerJS)につながりません。ネットワークを確認してください（学校・会社のWi-Fiだと遮断されることがあります。スマホ回線を試してください）';
+  if (t === 'webrtc') return '⚠️ P2P通信を確立できません。ネットワークが通信を遮断している可能性があります（スマホ回線を試してください）';
+  return (join ? '⚠️ 接続失敗: ' : '⚠️ 部屋作成エラー: ') + (t || 'unknown');
+}
 const WARM = { guest: null, host: null };
 const peerAlive = (p) => !!(p && p.open && !p.destroyed && !p.disconnected);
 function warmUp() {
   if (!window.Peer) return;
-  if (!WARM.guest) { try { const p = new Peer(); WARM.guest = p; p.on('error', () => { if (WARM.guest === p) WARM.guest = null; }); p.on('close', () => { if (WARM.guest === p) WARM.guest = null; }); } catch (e) { /* ignore */ } }
-  if (!WARM.host) { try { const code = genRoomCode(), p = new Peer('cc3d-' + code); WARM.host = { p, code }; p.on('error', () => { if (WARM.host && WARM.host.p === p) WARM.host = null; }); p.on('close', () => { if (WARM.host && WARM.host.p === p) WARM.host = null; }); } catch (e) { /* ignore */ } }
+  if (!WARM.guest) { try { const p = mkPeer(); WARM.guest = p; p.on('error', () => { if (WARM.guest === p) WARM.guest = null; }); p.on('close', () => { if (WARM.guest === p) WARM.guest = null; }); } catch (e) { /* ignore */ } }
+  if (!WARM.host) { try { const code = genRoomCode(), p = mkPeer('cc3d-' + code); WARM.host = { p, code }; p.on('error', () => { if (WARM.host && WARM.host.p === p) WARM.host = null; }); p.on('close', () => { if (WARM.host && WARM.host.p === p) WARM.host = null; }); } catch (e) { /* ignore */ } }
 }
 function takeWarmGuest() { const p = WARM.guest; WARM.guest = null; setTimeout(warmUp, 1500); return peerAlive(p) ? p : (p && (() => { try { p.destroy(); } catch (e) { /* ignore */ } })(), null); }
 function createRoom0() {
@@ -1914,13 +1939,16 @@ function createRoom0() {
   NET.guests = []; NET.hostConn = null; guestSeq = 0;
   const w = WARM.host; WARM.host = null; setTimeout(warmUp, 1500);
   if (w && peerAlive(w.p)) { peer = w.p; myRoomCode = w.code; }
-  else { if (w) { try { w.p.destroy(); } catch (e) { /* ignore */ } } myRoomCode = genRoomCode(); peer = new Peer('cc3d-' + myRoomCode); }
-  $('roomCodeDisplay').textContent = myRoomCode;
-  $('onlineStatus').textContent = '部屋を作成中...';
-  peer.on('open', () => { lobbyStatus(); });
-  if (peer.open) lobbyStatus();
-  peer.on('connection', hostAccept);
-  peer.on('error', (err) => { console.error('Peer error:', err); $('onlineStatus').textContent = '⚠️ 部屋作成エラー (もう一度試してください)'; });
+  else { if (w) { try { w.p.destroy(); } catch (e) { /* ignore */ } } myRoomCode = genRoomCode(); peer = mkPeer('cc3d-' + myRoomCode); }
+  const me = peer, showCode = () => { $('roomCodeDisplay').textContent = myRoomCode; lobbyStatus(); };
+  $('roomCodeDisplay').textContent = me.open ? myRoomCode : '準備中…';
+  $('onlineStatus').textContent = '部屋を準備中...';
+  me.on('open', showCode);
+  if (me.open) showCode();
+  me.on('connection', hostAccept);
+  me.on('disconnected', () => { if (peer !== me || me.destroyed) return; $('onlineStatus').textContent = '⚠️ サーバーとの接続が切れました。再接続中...'; try { me.reconnect(); } catch (e) { /* ignore */ } });
+  me.on('error', (err) => { console.error('Peer error:', err); if (peer === me) $('onlineStatus').textContent = peerErrText(err, false); });
+  setTimeout(() => { if (peer === me && !me.open && !me.destroyed) $('onlineStatus').textContent = peerErrText({ type: 'network' }, false); }, 9000);
 }
 function attachHost(c) {
   NET.hostConn = c;
@@ -1932,6 +1960,7 @@ function attachHost(c) {
       resetCtl(); $('onlineStatus').textContent = '🔴 通信が切断されました';
       if (state === 'play' && isOnlineGuest) { showCall('DISCONNECTED', 'ホストとの通信が切れました', 'bad'); setTimeout(() => { if (isOnlineGuest && state !== 'menu') toMenu(); }, 2500); }
     });
+    c.on('iceStateChanged', (s) => { if (s === 'failed') $('onlineStatus').textContent = peerErrText({ type: 'webrtc' }, true); });
     c.on('error', (err) => { console.error('DataConnection error:', err); $('onlineStatus').textContent = '⚠️ 通信エラーが発生しました'; });
 }
 function joinRoom() {
@@ -1944,10 +1973,12 @@ function joinRoom0(code) {
   if (peer) { try { peer.destroy(); } catch (e) { /* ignore */ } peer = null; }
   $('onlineStatus').textContent = 'ホストに接続中...';
   NET.spec = onlineRole === 'spec'; NET.lobby = null;
-  const p = takeWarmGuest(); peer = p || new Peer();
-  const go = () => attachHost(peer.connect('cc3d-' + code, { serialization: 'json' }));
-  if (p) go(); else peer.on('open', go);
-  peer.on('error', (err) => { console.error('Peer error:', err); $('onlineStatus').textContent = '⚠️ 接続失敗。部屋番号を確認してください'; });
+  const p = takeWarmGuest(); peer = p || mkPeer();
+  const me = peer;
+  const go = () => { const c = me.connect('cc3d-' + code, { serialization: 'json' }); attachHost(c); setTimeout(() => { if (NET.hostConn === c && !c.open && state === 'menu') $('onlineStatus').textContent = '⚠️ 接続に時間がかかっています…（ネットワークによっては繋がりません。スマホ回線を試すか、ホストに部屋を作り直してもらってください）'; }, 10000); };
+  if (p) go(); else me.on('open', go);
+  me.on('error', (err) => { console.error('Peer error:', err); if (peer === me) $('onlineStatus').textContent = peerErrText(err, true); });
+  setTimeout(() => { if (peer === me && !me.open && !me.destroyed) $('onlineStatus').textContent = peerErrText({ type: 'network' }, true); }, 9000);
 }
 
 /* ---------------------------- ranked match: matchmaking without a server ----------------------------
@@ -2001,13 +2032,13 @@ function rqScan(tok) {
     rqProbe(sp, rqCandidates(b0, 2, 99), tok, (c) => { if (tok !== RQ.token) return; if (c) rqMatchedAsGuest(sp, c); else rqWait(tok, b0, 0); });
   };
   let sp = RQ.sp && peerAlive(RQ.sp) ? RQ.sp : null;
-  if (!sp) { sp = takeWarmGuest() || new Peer(); sp.on('error', () => {}); }
+  if (!sp) { sp = takeWarmGuest() || mkPeer(); sp.on('error', () => {}); }
   if (peerAlive(sp)) go(sp); else sp.on('open', () => go(sp));
 }
 function rqWait(tok, b0, i) {
   if (tok !== RQ.token || !RQ.on) return;
   if (i > 2) { RQ.tm = setTimeout(() => rqScan(tok), 800); return; }
-  const p = new Peer('ccq-' + b0 + '-' + i); RQ.peer = p; let matched = false;
+  const p = mkPeer('ccq-' + b0 + '-' + i); RQ.peer = p; let matched = false;
   const mine = rqKey(b0, i);
   p.on('error', (err) => { if (err && err.type === 'unavailable-id') { rqD(p); if (RQ.peer === p) RQ.peer = null; rqWait(tok, b0, i + 1); } });
   p.on('open', () => {
@@ -2255,10 +2286,10 @@ $('tabEmote').addEventListener('click', () => { shopTab = 'emote'; renderShop();
 
 /* ----- gacha: coins → random character / racket. Duplicates turn into coins. ----- */
 const GACHA = {
-  cost: 300, cost10: 2700,
+  cost: 150, cost10: 1350,
   rate: { C: 67.5, R: 25, SR: 6, SSR: 1.5 },
   pool: { chars: { C: ['neon', 'rose'], R: ['sprinter', 'slugger'], SR: ['tech', 'wall'], SSR: ['legend'] }, rackets: { C: ['power', 'ctrl'], R: ['wide', 'light'], SR: [], SSR: ['gold'] } },
-  refund: { C: 100, R: 250, SR: 800, SSR: 2000 }, pity: 60
+  refund: { C: 50, R: 125, SR: 400, SSR: 1000 }, pity: 60
 };
 const RARITY_ORDER = ['C', 'R', 'SR', 'SSR'];
 let gKind = 'chars', gBusy = false;
@@ -2426,12 +2457,12 @@ function coinsForMatch(g) {
   if (g.cfg.demo || g.practice || (typeof isSpec === 'function' && isSpec())) return null;
   const me = meP(), idx = me.s === 1 ? 0 : 1, S = g.stats;
   const won = g.winner === me.s;
-  const parts = [['参加', 15]];
-  if (won) parts.push(['勝利', 50]);
-  if (S.won[idx]) parts.push(['獲得ポイント ' + S.won[idx], S.won[idx] * 2]);
-  if (S.aces[idx]) parts.push(['エース ' + S.aces[idx], Math.min(S.aces[idx], 6) * 4]);
-  if (S.perfect[idx]) parts.push(['PERFECT ' + S.perfect[idx], Math.min(S.perfect[idx], 10)]);
-  if (longestRally >= 10) parts.push(['ロングラリー', 8]);
+  const parts = [['参加', 30]];                // tuned so that one win ≈ one gacha pull (150)
+  if (won) parts.push(['勝利', 90]);
+  if (S.won[idx]) parts.push(['獲得ポイント ' + S.won[idx], S.won[idx] * 3]);
+  if (S.aces[idx]) parts.push(['エース ' + S.aces[idx], Math.min(S.aces[idx], 6) * 6]);
+  if (S.perfect[idx]) parts.push(['PERFECT ' + S.perfect[idx], Math.min(S.perfect[idx], 10) * 2]);
+  if (longestRally >= 10) parts.push(['ロングラリー', 20]);
   let sum = parts.reduce((a, p) => a + p[1], 0), mult = 1, note = '';
   if (g.cfg.online) { mult = 1.2; note = 'オンライン ×1.2'; }
   else if (g.cfg.twoPlayer && !g.cfg.doubles && !g.cfg.online) { mult = 0.5; note = '2人対戦 ×0.5'; }
@@ -2465,9 +2496,17 @@ async function api(body, ms) {
     return await r.json();
   } finally { clearTimeout(to); }
 }
-function loadPeerLib() {
+const PEER_SRC = ['https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js', 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js'];
+function loadPeerLib() {              // tries several CDNs in turn (some networks block one of them)
   if (window.Peer) return Promise.resolve();
-  if (!loadPeerLib.p) loadPeerLib.p = new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js'; s.onload = res; s.onerror = () => { loadPeerLib.p = null; rej(new Error('peerjs')); }; document.head.appendChild(s); });
+  if (!loadPeerLib.p) loadPeerLib.p = new Promise((res, rej) => {
+    let i = 0;
+    const next = () => {
+      if (i >= PEER_SRC.length) { loadPeerLib.p = null; rej(new Error('peerjs')); return; }
+      const s = document.createElement('script'); s.src = PEER_SRC[i++]; s.onload = () => (window.Peer ? res() : next()); s.onerror = () => { s.remove(); next(); }; document.head.appendChild(s);
+    };
+    next();
+  });
   return loadPeerLib.p;
 }
 
@@ -2522,7 +2561,7 @@ function startFriendPeer() {
   if (Cloud.fp || Cloud.fpBusy) return Promise.resolve(Cloud.fp);
   Cloud.fpBusy = true;
   return loadPeerLib().then(() => new Promise((res) => {
-    const p = new Peer('ccf-' + profile.fc);
+    const p = mkPeer('ccf-' + profile.fc);
     p.on('open', () => { Cloud.fp = p; Cloud.fpBusy = false; renderInvite(); res(p); probeAll(); });
     p.on('connection', (c) => {
       c.on('data', (m) => {
