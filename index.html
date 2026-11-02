@@ -1,6 +1,8 @@
 <!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#070c18">
 <title>Center Court 3D</title>
+<link rel="preconnect" href="https://unpkg.com" crossorigin>
+<link rel="dns-prefetch" href="https://0.peerjs.com">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
@@ -1896,15 +1898,27 @@ function guestPress(kind) {
 
 /* ---------------------------- rooms ---------------------------- */
 function createRoom() { $('onlineStatus').textContent = '通信を準備中...'; loadPeerLib().then(createRoom0).catch(() => { $('onlineStatus').textContent = '⚠️ 通信ライブラリを読み込めません。ネットワークを確認してください'; }); }
+/* Connections are prepared in advance ("warm"): the signalling socket of a spare guest peer and of a spare host peer (with its room code already reserved)
+   are opened while the player is still choosing, so creating / joining a room does not have to wait for the broker. */
+const WARM = { guest: null, host: null };
+const peerAlive = (p) => !!(p && p.open && !p.destroyed && !p.disconnected);
+function warmUp() {
+  if (!window.Peer) return;
+  if (!WARM.guest) { try { const p = new Peer(); WARM.guest = p; p.on('error', () => { if (WARM.guest === p) WARM.guest = null; }); p.on('close', () => { if (WARM.guest === p) WARM.guest = null; }); } catch (e) { /* ignore */ } }
+  if (!WARM.host) { try { const code = genRoomCode(), p = new Peer('cc3d-' + code); WARM.host = { p, code }; p.on('error', () => { if (WARM.host && WARM.host.p === p) WARM.host = null; }); p.on('close', () => { if (WARM.host && WARM.host.p === p) WARM.host = null; }); } catch (e) { /* ignore */ } }
+}
+function takeWarmGuest() { const p = WARM.guest; WARM.guest = null; setTimeout(warmUp, 1500); return peerAlive(p) ? p : (p && (() => { try { p.destroy(); } catch (e) { /* ignore */ } })(), null); }
 function createRoom0() {
   NET.ranked = false;
   if (peer) { try { peer.destroy(); } catch (e) { /* ignore */ } peer = null; }
   NET.guests = []; NET.hostConn = null; guestSeq = 0;
-  myRoomCode = genRoomCode();
+  const w = WARM.host; WARM.host = null; setTimeout(warmUp, 1500);
+  if (w && peerAlive(w.p)) { peer = w.p; myRoomCode = w.code; }
+  else { if (w) { try { w.p.destroy(); } catch (e) { /* ignore */ } } myRoomCode = genRoomCode(); peer = new Peer('cc3d-' + myRoomCode); }
   $('roomCodeDisplay').textContent = myRoomCode;
   $('onlineStatus').textContent = '部屋を作成中...';
-  peer = new Peer('cc3d-' + myRoomCode);
   peer.on('open', () => { lobbyStatus(); });
+  if (peer.open) lobbyStatus();
   peer.on('connection', hostAccept);
   peer.on('error', (err) => { console.error('Peer error:', err); $('onlineStatus').textContent = '⚠️ 部屋作成エラー (もう一度試してください)'; });
 }
@@ -1930,61 +1944,87 @@ function joinRoom0(code) {
   if (peer) { try { peer.destroy(); } catch (e) { /* ignore */ } peer = null; }
   $('onlineStatus').textContent = 'ホストに接続中...';
   NET.spec = onlineRole === 'spec'; NET.lobby = null;
-  peer = new Peer();
-  peer.on('open', () => {
-    attachHost(peer.connect('cc3d-' + code, { serialization: 'json' }));
-  });
+  const p = takeWarmGuest(); peer = p || new Peer();
+  const go = () => attachHost(peer.connect('cc3d-' + code, { serialization: 'json' }));
+  if (p) go(); else peer.on('open', go);
   peer.on('error', (err) => { console.error('Peer error:', err); $('onlineStatus').textContent = '⚠️ 接続失敗。部屋番号を確認してください'; });
 }
 
 /* ---------------------------- ranked match: matchmaking without a server ----------------------------
    Players are grouped by rating bucket. A searcher first tries to connect to waiting hosts "ccq-<bucket>-<0..2>" (own bucket, then neighbours);
    if nobody waits it claims one of those ids itself and waits a few seconds, then scans again with a wider range. */
-const RQ = { on: false, hosting: false, token: 0, tm: 0, peer: null, round: 0, t0: 0 };
+const RQ = { on: false, hosting: false, token: 0, tm: 0, peer: null, sp: null, round: 0, t0: 0, waitTm: 0 };
 const rqBucket = (rt) => clamp(Math.floor(rt / 150), 0, 20);
 const rqStat = (t) => { const e = $('rkInfo'); if (e) e.textContent = t; };
 function rqUI() { const b = $('rkGo'); if (b) { b.textContent = RQ.on ? 'やめる' : '対戦相手を探す'; b.classList.toggle('stop', RQ.on); } }
-function rqKill() { clearTimeout(RQ.tm); if (RQ.peer) { try { RQ.peer.destroy(); } catch (e) { /* ignore */ } RQ.peer = null; } if (peer) { try { peer.destroy(); } catch (e) { /* ignore */ } peer = null; } }
+const rqD = (p) => { if (p) { try { p.destroy(); } catch (e) { /* ignore */ } } };
+function rqKill() { clearTimeout(RQ.tm); clearInterval(RQ.waitTm); rqD(RQ.peer); RQ.peer = null; rqD(RQ.sp); RQ.sp = null; if (peer) { rqD(peer); peer = null; } }
 function rqStop(msg) { RQ.on = false; RQ.hosting = false; RQ.token++; rqKill(); NET.guests = []; NET.hostConn = null; rqStat(msg || ''); rqUI(); }
 function rankedSearch() {
   if (RQ.on) return;
-  NET.ranked = true;
-  RQ.on = true; RQ.hosting = false; RQ.round = 0; RQ.t0 = Date.now(); const tok = ++RQ.token;
+  NET.ranked = true; RQ.on = true; RQ.hosting = false; RQ.round = 0; RQ.t0 = Date.now(); const tok = ++RQ.token;
   rqKill(); NET.guests = []; NET.hostConn = null; NET.spec = false; NET.lobby = null; rqUI(); rqStat('接続の準備中…');
-  loadPeerLib().then(() => rqCycle(tok)).catch(() => rqStop('⚠️ 通信ライブラリを読み込めません。ネットワークを確認してください'));
+  loadPeerLib().then(() => rqScan(tok)).catch(() => rqStop('⚠️ 通信ライブラリを読み込めません。ネットワークを確認してください'));
 }
-function rqRestart() { if (!RQ.on) return; const tok = ++RQ.token; RQ.hosting = false; rqKill(); NET.guests = []; RQ.tm = setTimeout(() => rqCycle(tok), 300); }
-function rqCycle(tok) {
+function rqRestart() { if (!RQ.on) return; const tok = ++RQ.token; RQ.hosting = false; rqKill(); NET.guests = []; RQ.tm = setTimeout(() => rqScan(tok), 200); }
+// ids a searcher may connect to: every slot of every bucket within `radius`, optionally only keys lower than `below` (the side that scans is decided by key order, so two waiters never call each other at once)
+const rqKey = (b, i) => b * 3 + i;
+function rqCandidates(b0, radius, below) {
+  const out = [];
+  for (let d = 0; d <= radius; d++) for (const b of d ? [b0 - d, b0 + d] : [b0]) { if (b < 0 || b > 20) continue; for (let i = 0; i < 3; i++) if (rqKey(b, i) < below) out.push('ccq-' + b + '-' + i); }
+  return out;
+}
+// try to connect to every id at once through `via`; resolves as soon as one opens, or when all answered "nobody there"
+function rqProbe(via, ids, tok, cb) {
+  let over = false; const pending = new Set(ids), conns = [];
+  const end = (c) => { if (over) return; over = true; clearTimeout(timer); for (const o of conns) if (o !== c) { try { o.close(); } catch (e) { /* ignore */ } } cb(c); };
+  const timer = setTimeout(() => end(null), 2500);
+  const onErr = (err) => { if (over || !err || err.type !== 'peer-unavailable') return; const m = /(ccq-\d+-\d)/.exec(String(err.message || '')); if (m) { pending.delete(m[1]); if (!pending.size) end(null); } };
+  via.on('error', onErr);
+  if (!ids.length) { end(null); return; }
+  for (const id of ids) { try { const c = via.connect(id, { serialization: 'json' }); conns.push(c); c.on('open', () => { if (tok !== RQ.token || over) { try { c.close(); } catch (e) { /* ignore */ } return; } end(c); }); } catch (e) { pending.delete(id); } }
+}
+function rqMatchedAsGuest(via, c) {
+  clearTimeout(RQ.tm); clearInterval(RQ.waitTm);
+  if (RQ.peer && RQ.peer !== via) { rqD(RQ.peer); } if (RQ.sp && RQ.sp !== via) { rqD(RQ.sp); }
+  RQ.peer = null; RQ.sp = null; peer = via; RQ.on = false; rqUI(); rqStat('🟢 対戦相手が見つかりました！ 接続中…');
+  isOnlineGuest = false; isOnlineHost = false; attachHost(c);
+}
+// 1) one quick scan for players who are already waiting; 2) otherwise become a waiter (and keep looking for waiters with a lower key)
+function rqScan(tok) {
   if (tok !== RQ.token || !RQ.on) return;
-  const rt = profile.stats.rt, b0 = rqBucket(rt), radius = Math.min(RQ.round++, 6), order = [b0];
-  for (let d = 1; d <= radius; d++) { if (b0 - d >= 0) order.push(b0 - d); if (b0 + d <= 20) order.push(b0 + d); }
-  rqStat('🔎 対戦相手を探しています… レート ' + rt + ' 付近（' + Math.round((Date.now() - RQ.t0) / 1000) + '秒）');
-  const sp = new Peer(); RQ.peer = sp; let won = false;
-  sp.on('error', () => { /* peer-unavailable is the normal "nobody there" answer */ });
-  sp.on('open', () => {
-    const ids = []; for (const b of order) for (let i = 0; i < 3; i++) ids.push('ccq-' + b + '-' + i);
-    const conns = ids.slice(0, 15).map((id) => { try { return sp.connect(id, { serialization: 'json' }); } catch (e) { return null; } }).filter(Boolean);
-    for (const c of conns) c.on('open', () => {
-      if (won || tok !== RQ.token) { try { c.close(); } catch (e) { /* ignore */ } return; }
-      won = true; for (const o of conns) if (o !== c) { try { o.close(); } catch (e) { /* ignore */ } }
-      clearTimeout(RQ.tm); RQ.peer = null; peer = sp; RQ.on = false; rqUI(); rqStat('🟢 対戦相手が見つかりました！ 接続中…');
-      isOnlineGuest = false; isOnlineHost = false; attachHost(c);
-    });
-    RQ.tm = setTimeout(() => { if (won || tok !== RQ.token) return; try { sp.destroy(); } catch (e) { /* ignore */ } RQ.peer = null; rqWait(tok, b0, 0); }, 3500);
-  });
+  const rt = profile.stats.rt, b0 = rqBucket(rt);
+  rqStat('🔎 対戦相手を探しています… レート ' + rt + ' 付近');
+  const go = (sp) => {
+    if (tok !== RQ.token) return;
+    RQ.sp = sp;
+    rqProbe(sp, rqCandidates(b0, 2, 99), tok, (c) => { if (tok !== RQ.token) return; if (c) rqMatchedAsGuest(sp, c); else rqWait(tok, b0, 0); });
+  };
+  let sp = RQ.sp && peerAlive(RQ.sp) ? RQ.sp : null;
+  if (!sp) { sp = takeWarmGuest() || new Peer(); sp.on('error', () => {}); }
+  if (peerAlive(sp)) go(sp); else sp.on('open', () => go(sp));
 }
 function rqWait(tok, b0, i) {
   if (tok !== RQ.token || !RQ.on) return;
-  if (i > 2) { RQ.tm = setTimeout(() => rqCycle(tok), 500); return; }
+  if (i > 2) { RQ.tm = setTimeout(() => rqScan(tok), 800); return; }
   const p = new Peer('ccq-' + b0 + '-' + i); RQ.peer = p; let matched = false;
-  p.on('error', (err) => { if (err && err.type === 'unavailable-id') { try { p.destroy(); } catch (e) { /* ignore */ } RQ.peer = null; rqWait(tok, b0, i + 1); } });
+  const mine = rqKey(b0, i);
+  p.on('error', (err) => { if (err && err.type === 'unavailable-id') { rqD(p); if (RQ.peer === p) RQ.peer = null; rqWait(tok, b0, i + 1); } });
   p.on('open', () => {
-    rqStat('⏳ 待機中… 相手が現れるのを待っています（' + Math.round((Date.now() - RQ.t0) / 1000) + '秒）');
-    RQ.tm = setTimeout(() => { if (matched || tok !== RQ.token) return; try { p.destroy(); } catch (e) { /* ignore */ } RQ.peer = null; rqCycle(tok); }, 4000 + Math.random() * 4000);
+    const t0 = Date.now();
+    const look = () => {
+      if (matched || tok !== RQ.token) return;
+      const secs = Math.round((Date.now() - RQ.t0) / 1000), radius = Math.min(6, Math.floor((Date.now() - t0) / 4000));
+      rqStat('⏳ 対戦相手を待っています…（' + secs + '秒' + (radius ? ' · 範囲を広げて検索中' : '') + '）');
+      const ids = rqCandidates(b0, radius, mine);
+      if (!ids.length) return;
+      rqProbe(p, ids, tok, (c) => { if (c && !matched && tok === RQ.token) { matched = true; rqMatchedAsGuest(p, c); } });
+    };
+    look(); RQ.waitTm = setInterval(look, 1500);
   });
   p.on('connection', (c) => {
     if (matched || tok !== RQ.token) { try { c.close(); } catch (e) { /* ignore */ } return; }
-    matched = true; clearTimeout(RQ.tm); RQ.peer = null; peer = p; RQ.hosting = true; rqStat('🟢 対戦相手が見つかりました！ 接続中…');
+    matched = true; clearInterval(RQ.waitTm); clearTimeout(RQ.tm); RQ.peer = null; rqD(RQ.sp); RQ.sp = null; peer = p; RQ.hosting = true; rqStat('🟢 対戦相手が見つかりました！ 接続中…');
     hostAccept(c);
   });
 }
@@ -1992,7 +2032,7 @@ function rqKickoff(rec) {
   settings.form = 'singles'; settings.ball = 'hard'; settings.games = 3;
   rqStat('🟢 マッチ成立：' + (rec.name || '相手') + '（レート ' + (rec.rt || '?') + '）');
   RQ.on = false; RQ.hosting = false; rqUI();
-  setTimeout(() => { isOnlineGuest = false; isOnlineHost = false; if (rec.conn.open && !rec.gone) hostStart(); else rqStop('⚠️ 相手が切断しました。もう一度探してください'); }, 700);
+  setTimeout(() => { isOnlineGuest = false; isOnlineHost = false; if (rec.conn.open && !rec.gone) hostStart(); else rqStop("⚠️ 相手が切断しました。もう一度探してください"); }, 150);
 }
 
 
@@ -3948,7 +3988,7 @@ function wizRender() {
   if (box.parentNode !== slot) slot.appendChild(box);
   box.hidden = cur === 'Lobby' && !host;
   $('inviteBox').hidden = !(cur === 'Lobby' && host);
-  if (settings.mode === 'online') loadPeerLib().catch(() => {});                 // prefetch while the player picks a role
+  if (settings.mode === 'online') loadPeerLib().then(warmUp).catch(() => {});      // prepare connections while the player picks a role
   const rk = settings.mode === 'online' && onlineRole === 'rank';
   $('lobChat').hidden = !(cur === 'Lobby' && settings.mode === 'online' && onlineRole !== 'rank');
   $('lobHost').hidden = cur === 'Lobby' && rk; $('rankBox').style.display = cur === 'Lobby' && rk ? 'block' : 'none'; $('onlineStatus').hidden = cur === 'Lobby' && rk;
@@ -4286,6 +4326,7 @@ function frame(now) {
 /* ============================== boot ============================== */
 newDemo();
 syncMenu();
+setTimeout(() => loadPeerLib().then(() => { if (settings.mode === 'online') warmUp(); }).catch(() => {}), 1500);       // PeerJS is fetched right after the first frames, not when the button is pressed
 syncButtons();
 resize();
 el.hud.hidden = true; el.pause.hidden = true; el.end.hidden = true; el.gauge.hidden = true;
